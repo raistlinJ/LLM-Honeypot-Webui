@@ -94,4 +94,4 @@ To use a local LLM instead of OpenAI:
 
 ## License
 
-MIT
+GPL-3.0
