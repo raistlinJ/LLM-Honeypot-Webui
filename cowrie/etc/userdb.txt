@@ -1,0 +1,14 @@
+# Cowrie user database
+# Format: username:uid:password
+# Use * as password to allow any password
+# Use ! prefix to deny a specific password
+# Use x as uid to use default
+
+root:x:*
+admin:x:*
+user:x:*
+test:x:*
+guest:x:*
+ubuntu:x:*
+pi:x:*
+oracle:x:*

@@ -1,0 +1,7 @@
+.env
+cowrie/var/
+cowrie/data/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/

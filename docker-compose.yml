@@ -1,0 +1,89 @@
+services:
+  # ============================================
+  # Cowrie SSH/Telnet Honeypot
+  # ============================================
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: llm-honeypot-cowrie
+    restart: unless-stopped
+    ports:
+      - "${COWRIE_SSH_PORT:-2222}:2222"
+      - "${COWRIE_TELNET_PORT:-2223}:2223"
+    volumes:
+      - ./cowrie/etc:/cowrie/cowrie-git/etc
+      - ./cowrie/custom_plugins/llm.py:/cowrie/cowrie-git/src/cowrie/llm/llm.py
+      - cowrie-var:/cowrie/cowrie-git/var
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+    environment:
+      - TZ=UTC
+    networks:
+      - honeypot-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ============================================
+  # Management API (Flask)
+  # ============================================
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: llm-honeypot-api
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./cowrie/etc:/cowrie-etc
+      - cowrie-logs:/cowrie-logs:ro
+      - api-data:/app/data
+    environment:
+      - COWRIE_CONFIG_PATH=/cowrie-etc/cowrie.cfg
+      - COWRIE_LOG_PATH=/cowrie-logs/cowrie.json
+      - COWRIE_CONTAINER_NAME=llm-honeypot-cowrie
+      - SETTINGS_PATH=/app/data/settings.json
+    depends_on:
+      - cowrie
+    networks:
+      - honeypot-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ============================================
+  # Web UI (Nginx)
+  # ============================================
+  webui:
+    build:
+      context: ./webui
+      dockerfile: Dockerfile
+    container_name: llm-honeypot-webui
+    restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-8080}:80"
+    depends_on:
+      - api
+    networks:
+      - honeypot-net
+
+  # ============================================
+  # Ollama (Optional - Local LLM Backend)
+  # Uncomment to run a self-contained local LLM
+  # ============================================
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: llm-honey-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   networks:
+  #     - honeypot-net
+
+volumes:
+  cowrie-var:
+  cowrie-logs:
+  api-data:
+  # ollama-data:
+
+networks:
+  honeypot-net:
+    driver: bridge

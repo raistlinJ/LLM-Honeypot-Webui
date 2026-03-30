@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="LLM-Honeypot-Webui: AI-powered SSH Honeypot Management System with real-time monitoring and LLM-driven responses.">
+    <meta name="author" content="Jaime Acosta">
+    <title>LLM-Honeypot-Webui | Honeypot Management</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Mobile Menu Button -->
+<button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">☰</button>
+
+<!-- Sidebar Overlay (mobile) -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<div class="app-container">
+    <!-- ========== SIDEBAR ========== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand">
+                <div class="brand-icon">🍯</div>
+                <div class="brand-text">
+                    <span class="brand-name" style="font-size: 1.1rem;">LLM-Honeypot-Webui</span>
+                    <span class="brand-subtitle">Honeypot Manager</span>
+                </div>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a class="nav-item active" data-page="dashboard" onclick="navigateTo('dashboard')">
+                <span class="nav-icon">📊</span>
+                Dashboard
+            </a>
+            <a class="nav-item" data-page="logs" onclick="navigateTo('logs')">
+                <span class="nav-icon">📋</span>
+                Log Viewer
+            </a>
+            <a class="nav-item" data-page="sessions" onclick="navigateTo('sessions')">
+                <span class="nav-icon">🔗</span>
+                Sessions
+            </a>
+            <a class="nav-item" data-page="config" onclick="navigateTo('config')">
+                <span class="nav-icon">⚙️</span>
+                Configuration
+            </a>
+            <a class="nav-item" data-page="settings" onclick="navigateTo('settings')">
+                <span class="nav-icon">🤖</span>
+                LLM Settings
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="status-badge-sidebar" id="sidebarStatus">
+                <span class="status-dot-small" id="sidebarStatusDot"></span>
+                <span id="sidebarStatusText">Checking...</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ========== MAIN CONTENT ========== -->
+    <main class="main-content">
+
+        <!-- ==================== DASHBOARD ==================== -->
+        <div class="page-view active" id="page-dashboard">
+            <div class="page-header">
+                <h1 class="page-title">Dashboard</h1>
+                <p class="page-subtitle">Real-time honeypot monitoring and statistics</p>
+            </div>
+
+            <!-- Status Banner -->
+            <div class="status-banner" id="statusBanner">
+                <div class="status-info">
+                    <div class="status-dot-large" id="statusDot"></div>
+                    <div class="status-text">
+                        <h3 id="statusTitle">Loading...</h3>
+                        <p id="statusSubtitle">Checking honeypot status</p>
+                    </div>
+                </div>
+                <div class="status-actions">
+                    <button class="btn btn-success" id="btnStart" onclick="controlHoneypot('start')">
+                        <span>▶</span> Start
+                    </button>
+                    <button class="btn btn-danger" id="btnStop" onclick="controlHoneypot('stop')">
+                        <span>■</span> Stop
+                    </button>
+                    <button class="btn btn-warning" id="btnRestart" onclick="controlHoneypot('restart')">
+                        <span>↻</span> Restart
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card cyan">
+                    <div class="stat-icon">🌐</div>
+                    <div class="stat-value" id="statTotalEvents">—</div>
+                    <div class="stat-label">Total Events</div>
+                </div>
+                <div class="stat-card emerald">
+                    <div class="stat-icon">🔑</div>
+                    <div class="stat-value" id="statLoginAttempts">—</div>
+                    <div class="stat-label">Login Attempts</div>
+                </div>
+                <div class="stat-card amber">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-value" id="statSuccessLogins">—</div>
+                    <div class="stat-label">Successful Logins</div>
+                </div>
+                <div class="stat-card rose">
+                    <div class="stat-icon">💻</div>
+                    <div class="stat-value" id="statCommands">—</div>
+                    <div class="stat-label">Commands Entered</div>
+                </div>
+                <div class="stat-card violet">
+                    <div class="stat-icon">🏴‍☠️</div>
+                    <div class="stat-value" id="statUniqueIPs">—</div>
+                    <div class="stat-label">Unique IPs</div>
+                </div>
+            </div>
+
+            <!-- Top Lists -->
+            <div class="content-grid">
+                <div class="card">
+                    <div class="card-title">🎯 Top Usernames</div>
+                    <ul class="top-list" id="topUsernames">
+                        <li class="empty-state"><p>No data yet</p></li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">🔐 Top Passwords</div>
+                    <ul class="top-list" id="topPasswords">
+                        <li class="empty-state"><p>No data yet</p></li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">📡 Top Source IPs</div>
+                    <ul class="top-list" id="topIPs">
+                        <li class="empty-state"><p>No data yet</p></li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">⌨️ Top Commands</div>
+                    <ul class="top-list" id="topCommands">
+                        <li class="empty-state"><p>No data yet</p></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== LOG VIEWER ==================== -->
+        <div class="page-view" id="page-logs">
+            <div class="page-header">
+                <h1 class="page-title">Log Viewer</h1>
+                <p class="page-subtitle">Browse and search honeypot event logs</p>
+            </div>
+
+            <div class="card">
+                <div class="log-controls">
+                    <div class="search-input-wrapper">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" class="form-input" id="logSearch" placeholder="Search logs (IP, command, username...)" onkeyup="debounceLogSearch()">
+                    </div>
+                    <select class="form-select" id="logEventFilter" onchange="loadLogs()" style="width: 220px; flex-shrink: 0;">
+                        <option value="">All Events</option>
+                        <option value="cowrie.login.success">Login Success</option>
+                        <option value="cowrie.login.failed">Login Failed</option>
+                        <option value="cowrie.command.input">Commands</option>
+                        <option value="cowrie.session.connect">Session Connect</option>
+                        <option value="cowrie.session.closed">Session Closed</option>
+                        <option value="cowrie.llm">LLM Interactions</option>
+                    </select>
+                    <button class="btn btn-ghost" onclick="loadLogs()">↻ Refresh</button>
+                </div>
+
+                <div class="log-table-wrapper" id="logTableWrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Event</th>
+                                <th>Source IP</th>
+                                <th>Details</th>
+                                <th>Session</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logTableBody">
+                            <tr>
+                                <td colspan="5">
+                                    <div class="empty-state">
+                                        <div class="empty-icon">📋</div>
+                                        <h3>No log entries</h3>
+                                        <p>Logs will appear here once the honeypot captures activity</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== SESSIONS ==================== -->
+        <div class="page-view" id="page-sessions">
+            <div class="page-header">
+                <h1 class="page-title">Attack Sessions</h1>
+                <p class="page-subtitle">View individual attacker sessions and their commands</p>
+            </div>
+
+            <div class="card">
+                <div id="sessionsList">
+                    <div class="empty-state">
+                        <div class="empty-icon">🔗</div>
+                        <h3>No sessions recorded</h3>
+                        <p>Sessions will appear here once attackers connect to the honeypot</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== CONFIGURATION ==================== -->
+        <div class="page-view" id="page-config">
+            <div class="page-header">
+                <h1 class="page-title">Configuration</h1>
+                <p class="page-subtitle">Manage Cowrie honeypot settings</p>
+            </div>
+
+            <form id="configForm" onsubmit="saveConfig(event)">
+                <div class="content-grid">
+                    <!-- Honeypot Settings -->
+                    <div class="card">
+                        <div class="config-section">
+                            <div class="config-section-title">🏠 Honeypot Identity</div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="cfgHostname">Hostname</label>
+                                <input type="text" class="form-input" id="cfgHostname" value="svr04" placeholder="svr04">
+                                <span class="form-hint">The hostname displayed to attackers in the shell prompt</span>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="cfgBackend">Backend Mode</label>
+                                <select class="form-select" id="cfgBackend">
+                                    <option value="shell">Shell (Emulated)</option>
+                                    <option value="llm">LLM (AI-Powered)</option>
+                                    <option value="proxy">Proxy (High-Interaction)</option>
+                                </select>
+                                <span class="form-hint">Shell = emulated, LLM = AI-generated responses, Proxy = real backend VM</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Protocol Settings -->
+                    <div class="card">
+                        <div class="config-section">
+                            <div class="config-section-title">🔌 Protocols</div>
+
+                            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" style="font-size: 0.75rem; margin-bottom: 4px;">Port</label>
+                                    <input type="number" class="form-input mono" id="cfgSSHPort" value="2222" style="width: 85px; padding: 4px 10px;">
+                                </div>
+                                <label class="form-toggle" style="margin-bottom: 0;">
+                                    <input type="checkbox" class="toggle-input" id="cfgSSHEnabled" checked>
+                                    <span class="toggle-switch"></span>
+                                    <span class="toggle-label">SSH Enabled</span>
+                                </label>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label" for="cfgSSHVersion">SSH Version String</label>
+                                <input type="text" class="form-input mono" id="cfgSSHVersion" value="SSH-2.0-OpenSSH_6.0p1 Debian-4+deb7u2">
+                                <span class="form-hint">The SSH banner string presented to attackers</span>
+                            </div>
+
+                            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" style="font-size: 0.75rem; margin-bottom: 4px;">Port</label>
+                                    <input type="number" class="form-input mono" id="cfgTelnetPort" value="2223" style="width: 85px; padding: 4px 10px;">
+                                </div>
+                                <label class="form-toggle" style="margin-bottom: 0;">
+                                    <input type="checkbox" class="toggle-input" id="cfgTelnetEnabled" checked>
+                                    <span class="toggle-switch"></span>
+                                    <span class="toggle-label">Telnet Enabled</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom: 24px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <div class="config-section-title" style="margin-bottom: 4px; border: none; padding: 0;">💾 Save Configuration</div>
+                            <span class="form-hint">Apply changes and optionally restart the honeypot</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label class="form-toggle">
+                                <input type="checkbox" class="toggle-input" id="cfgAutoRestart" checked>
+                                <span class="toggle-switch"></span>
+                                <span class="toggle-label">Auto-restart after save</span>
+                            </label>
+                            <button type="submit" class="btn btn-primary">Save Configuration</button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- ==================== LLM SETTINGS ==================== -->
+        <div class="page-view" id="page-settings">
+            <div class="page-header">
+                <h1 class="page-title">LLM Settings</h1>
+                <p class="page-subtitle">Configure the AI backend for generating honeypot responses</p>
+            </div>
+
+            <!-- Provider Selection -->
+            <div class="provider-cards" id="providerCards">
+                <div class="provider-card selected" data-provider="openai" onclick="selectProvider('openai')">
+                    <div class="provider-icon">🧠</div>
+                    <div class="provider-name">OpenAI</div>
+                    <div class="provider-desc">GPT-4o, GPT-4o-mini, GPT-3.5</div>
+                </div>
+                <div class="provider-card" data-provider="ollama" onclick="selectProvider('ollama')">
+                    <div class="provider-icon">🦙</div>
+                    <div class="provider-name">Ollama / Local LLM</div>
+                    <div class="provider-desc">Llama 3, CodeLlama, Mistral, etc.</div>
+                </div>
+            </div>
+
+            <form id="settingsForm" onsubmit="saveSettings(event)">
+                <!-- OpenAI Settings -->
+                <div class="card" id="openaiSettings" style="margin-bottom: 24px;">
+                    <div class="config-section">
+                        <div class="config-section-title">🧠 OpenAI Configuration</div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="settApiKey">API Key</label>
+                            <input type="password" class="form-input mono" id="settApiKey" placeholder="sk-...">
+                            <span class="form-hint">Your OpenAI API key. Stored securely in the container.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="settOpenAIHost">Host URL</label>
+                            <input type="text" class="form-input mono" id="settOpenAIHost" list="openaiHostHistory" value="https://api.openai.com" placeholder="https://api.openai.com" onfocus="this.select()">
+                            <datalist id="openaiHostHistory"></datalist>
+                            <span class="form-hint">The base URL for the OpenAI-compatible API (e.g. LiteLLM, vLLM, OpenAI).</span>
+                        </div>
+
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 6px;">
+                                <label class="form-label" for="settOpenAIModel" style="margin-bottom: 0;">Model</label>
+                                <button type="button" class="btn btn-ghost" style="padding: 4px 10px; font-size: 0.75rem;" onclick="fetchModels('openai')">
+                                    <span>🔄</span> Fetch Models
+                                </button>
+                            </div>
+                            <select class="form-select" id="settOpenAIModel">
+                                <option value="gpt-4o-mini">gpt-4o-mini (Fast, Cheap)</option>
+                                <option value="gpt-4o">gpt-4o (Best Quality)</option>
+                                <option value="gpt-3.5-turbo">gpt-3.5-turbo (Legacy)</option>
+                                <option value="custom">Custom Model...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="openaiCustomModelGroup" style="display: none;">
+                            <label class="form-label" for="settOpenAICustomModel">Custom Model Name</label>
+                            <input type="text" class="form-input mono" id="settOpenAICustomModel" placeholder="gpt-4-turbo-preview">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Ollama Settings -->
+                <div class="card" id="ollamaSettings" style="margin-bottom: 24px; display: none;">
+                    <div class="config-section">
+                        <div class="config-section-title">🦙 Ollama / Local LLM Configuration</div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="settOllamaHost">Ollama Host URL</label>
+                            <input type="text" class="form-input mono" id="settOllamaHost" list="ollamaHostHistory" value="http://ollama:11434" placeholder="http://host.docker.internal:11434" onfocus="this.select()">
+                            <datalist id="ollamaHostHistory"></datalist>
+                            <span class="form-hint">The Ollama API endpoint. Use "http://ollama:11434" if running via Docker Compose, or "http://host.docker.internal:11434" for native host access.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 6px;">
+                                <label class="form-label" for="settOllamaModel" style="margin-bottom: 0;">Model</label>
+                                <button type="button" class="btn btn-ghost" style="padding: 4px 10px; font-size: 0.75rem;" onclick="fetchModels('ollama')">
+                                    <span>🔄</span> Fetch Models
+                                </button>
+                            </div>
+                            <div id="ollamaModelContainer">
+                                <input type="text" class="form-input mono" id="settOllamaModel" value="llama3" placeholder="llama3">
+                            </div>
+                            <span class="form-hint">Model name as registered in Ollama (e.g., llama3, codellama, mistral)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Common LLM Settings -->
+                <div class="card" style="margin-bottom: 24px;">
+                    <div class="config-section">
+                        <div class="config-section-title">🎛️ Response Parameters</div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" for="settTemperature">Temperature</label>
+                                <input type="number" class="form-input" id="settTemperature" value="0.7" min="0" max="2" step="0.1">
+                                <span class="form-hint">0.0 = deterministic, 2.0 = very random. Recommended: 0.5-0.8</span>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="settMaxTokens">Max Tokens</label>
+                                <input type="number" class="form-input" id="settMaxTokens" value="500" min="50" max="4096" step="50">
+                                <span class="form-hint">Maximum output length per command response</span>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-toggle">
+                                <input type="checkbox" class="toggle-input" id="settDebug">
+                                <span class="toggle-switch"></span>
+                                <span class="toggle-label">Enable LLM Debug Logging</span>
+                            </label>
+                            <span class="form-hint" style="margin-left: 56px;">Logs full JSON request/response to Cowrie logs for troubleshooting</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <div class="config-section-title" style="margin-bottom: 4px; border: none; padding: 0;">💾 Save LLM Settings</div>
+                            <span class="form-hint">Settings are applied to cowrie.cfg. Restart recommended after changes.</span>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save Settings</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+    </main>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
