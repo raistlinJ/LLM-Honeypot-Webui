@@ -1,7 +1,51 @@
+# Environments
 .env
+.env.example
+
+# Cowrie & Logs
 cowrie/var/
 cowrie/data/
+cowrie-logs/
+*.json
+*.log
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Docker
+.docker/
+
+# OS
 .DS_Store
-node_modules/
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDES
+.vscode/
+.idea/
+*.swp
+*.swo

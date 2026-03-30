@@ -37,7 +37,8 @@ A complete SSH/Telnet honeypot solution using [Cowrie](https://github.com/cowrie
 
 1. **Clone and configure:**
    ```bash
-   cd llm-honey
+   git clone <your-repo-url>
+   cd LLM-Honeypot-Webui
    cp .env.example .env
    # Edit .env with your settings (API keys, ports, etc.)
    ```
