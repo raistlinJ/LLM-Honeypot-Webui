@@ -476,6 +476,9 @@ def update_config():
         save_settings(settings)
         write_cowrie_config(settings)
         
+        # Synchronize with host .env file
+        sync_env_file(settings)
+        
         # Determine if recreation or simple restart is needed
         ports_changed = (new_ssh_port != old_ssh_port) or (new_telnet_port != old_telnet_port)
         
@@ -662,6 +665,35 @@ def health():
     """Health check endpoint."""
     return jsonify({"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()})
 
+def sync_env_file(settings):
+    """Update the .env file with current port settings."""
+    env_path = "/app/.env"
+    if not os.path.exists(env_path):
+        return False, "Environment file not found"
+    
+    try:
+        with open(env_path, "r") as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        ssh_port = str(settings.get("ssh_port", 2222))
+        telnet_port = str(settings.get("telnet_port", 2223))
+        
+        for line in lines:
+            if line.startswith("COWRIE_SSH_PORT="):
+                new_lines.append(f"COWRIE_SSH_PORT={ssh_port}\n")
+            elif line.startswith("COWRIE_TELNET_PORT="):
+                new_lines.append(f"COWRIE_TELNET_PORT={telnet_port}\n")
+            else:
+                new_lines.append(line)
+        
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+            
+        return True, "Synced"
+    except Exception as e:
+        return False, str(e)
+
 def is_port_in_use(port):
     """Check if any other container is using the specified port on the host."""
     client = get_docker_client()
@@ -693,33 +725,30 @@ def recreate_cowrie_container(settings):
         image = old_container.attrs['Config']['Image']
         name = old_container.name
         
+        # Capture networks
+        networks = old_container.attrs.get('NetworkSettings', {}).get('Networks', {})
+        network_names = list(networks.keys())
+        
         # Prepare new port bindings
-        ssh_port = settings.get("ssh_port", 2222)
-        telnet_port = settings.get("telnet_port", 2223)
+        ssh_port = int(settings.get("ssh_port", 2222))
+        telnet_port = int(settings.get("telnet_port", 2223))
         
         port_bindings = {
             '2222/tcp': ssh_port,
             '2223/tcp': telnet_port
         }
         
+        # Get volumes from the original container
+        orig_volumes = old_container.attrs.get('HostConfig', {}).get('Binds', [])
+        
         # Stop and remove
         old_container.stop(timeout=10)
         old_container.remove()
         
-        # Re-create with same volumes and networks from the docker-compose context
-        # Note: We rely on the fact that the initial container was created by compose
-        # with these specific volumes.
-        volumes = {
-            os.path.abspath("./cowrie/etc"): {'bind': '/cowrie/cowrie-git/etc', 'mode': 'rw'},
-            # Other volumes are usually managed by compose, we might need to be careful here
-            # But since we are inside a compose setup, we'll try to find the project volumes
-        }
-        
-        # For simplicity and robustness during this specific task, we will try to use
-        # a safer approach: identify the volumes from the original container.
-        orig_volumes = old_container.attrs.get('HostConfig', {}).get('Binds', [])
-        
         # Create new one
+        # We start with the FIRST network found (usually the default compose bridge)
+        primary_net = network_names[0] if network_names else "bridge"
+        
         new_container = client.containers.run(
             image,
             name=name,
@@ -727,8 +756,17 @@ def recreate_cowrie_container(settings):
             ports=port_bindings,
             volumes=orig_volumes,
             restart_policy={"Name": "unless-stopped"},
-            network="llm-honey_honeypot-net" # Use the projected name from compose
+            network=primary_net
         )
+        
+        # Re-attach other networks if there were multiple
+        if len(network_names) > 1:
+            for net_name in network_names[1:]:
+                try:
+                    network = client.networks.get(net_name)
+                    network.connect(new_container)
+                except Exception:
+                    pass
         
         return True, "Recreated"
     except Exception as e:

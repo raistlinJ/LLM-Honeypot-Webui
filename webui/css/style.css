@@ -887,15 +887,49 @@ tbody tr:last-child td {
     margin-top: 6px;
 }
 
-.btn-mini {
-    padding: 3px 8px;
-    font-size: 0.7rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border-secondary);
-    color: var(--text-tertiary);
+.btn-mini:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+}
+
+/* LLM Error Display */
+.llm-error-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 4px;
+    border-left: 4px solid var(--accent-rose);
+}
+
+.llm-error-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: var(--accent-rose);
+}
+
+.llm-error-content {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px;
     border-radius: 4px;
-    cursor: pointer;
-    transition: all var(--transition-fast);
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.status-badge-error {
+    background: var(--accent-rose);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
 }
 
 .btn-mini:hover {

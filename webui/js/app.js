@@ -387,6 +387,21 @@ function getEventDetails(entry) {
                         <button class="btn-mini" onclick="downloadContent(this, 'response.txt')">💾 Download</button>
                     </div>
                 </div>`;
+        } else if (eventId.includes('error')) {
+            title = 'AI Backend Error';
+            const errorText = entry.error || 'Unknown API Error';
+            const status = entry.status || '???';
+            
+            return `
+                <div class="llm-details">
+                    <div class="llm-error-box">
+                        <div class="llm-error-header">
+                            <span class="status-badge-error">Status ${status}</span>
+                            <strong>${title}</strong>
+                        </div>
+                        <div class="llm-error-content">${escapeHtml(errorText)}</div>
+                    </div>
+                </div>`;
         }
     }
 

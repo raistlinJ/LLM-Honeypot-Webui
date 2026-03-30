@@ -12,8 +12,8 @@ services:
     volumes:
       - ./cowrie/etc:/cowrie/cowrie-git/etc
       - ./cowrie/custom_plugins/llm.py:/cowrie/cowrie-git/src/cowrie/llm/llm.py
-      - cowrie-var:/cowrie/cowrie-git/var
-      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+      - ./cowrie/var:/cowrie/cowrie-git/var
+      - ./cowrie/log:/cowrie/cowrie-git/var/log/cowrie
     environment:
       - TZ=UTC
     networks:
@@ -33,8 +33,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./cowrie/etc:/cowrie-etc
-      - cowrie-logs:/cowrie-logs:ro
-      - api-data:/app/data
+      - ./cowrie/log:/cowrie-logs:ro
+      - ./api/data:/app/data
+      - ./.env:/app/.env
     environment:
       - COWRIE_CONFIG_PATH=/cowrie-etc/cowrie.cfg
       - COWRIE_LOG_PATH=/cowrie-logs/cowrie.json
@@ -77,12 +78,6 @@ services:
   #     - ollama-data:/root/.ollama
   #   networks:
   #     - honeypot-net
-
-volumes:
-  cowrie-var:
-  cowrie-logs:
-  api-data:
-  # ollama-data:
 
 networks:
   honeypot-net:

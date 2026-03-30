@@ -146,30 +146,44 @@ class LLMClient:
             "temperature": self.temperature,
         }
 
-    def _handle_response_body(self, response: IResponse) -> Deferred[tuple[int, bytes]]:
+    def _handle_response_body(
+        self, response: IResponse, session: str | None = None, sensor: str | None = None
+    ) -> Deferred[tuple[int, bytes]]:
         """Extract the response body from the HTTP response."""
         d: Deferred[tuple[int, bytes]] = defer.Deferred()
         response.deliverBody(SimpleResponseReceiver(response.code, d))
         return d
 
     def _handle_connection_error(
-        self, err: tw_failure.Failure
+        self, err: tw_failure.Failure, session: str | None = None, sensor: str | None = None
     ) -> tuple[int, bytes]:
         """Handle connection errors."""
-        err.trap(Exception)
-        return (500, err.getErrorMessage().encode("utf-8"))
+        error_msg = err.getErrorMessage()
+        log.msg(
+            eventid="cowrie.llm.error",
+            status=0,
+            error=error_msg,
+            format="LLM connection error: %(error)s",
+            message=f"LLM connection error: {error_msg}",
+            comp="cowrie",
+            session=session,
+            sensor=sensor
+        )
+        log.err(f"LLM connection error: {error_msg}")
+        return (0, error_msg.encode("utf-8"))
 
     def _send_request(self, prompt: list[str]) -> Deferred[tuple[int, bytes]]:
         """Send request to the LLM API."""
         request_body = self._format_request_body(prompt)
 
-        if self.debug:
-            log.msg(
-                eventid="cowrie.llm.request",
-                request=request_body,
-                prompt="\n\n".join([f"[{m['role'].upper()}]\n{m['content']}" for m in request_body.get("messages", [])]),
-                format="LLM request: %(request)s"
-            )
+        log.msg(
+            eventid="cowrie.llm.request",
+            request=request_body,
+            prompt="\n\n".join([f"[{m['role'].upper()}]\n{m['content']}" for m in request_body.get("messages", [])]),
+            format="LLM request: %(request)s",
+            comp="cowrie",
+            message=f"LLM request: {request_body.get('model')}"
+        )
 
         url = f"{self.host}{self.path}"
         d: Deferred[Any] = self.agent.request(
@@ -179,7 +193,16 @@ class LLMClient:
             bodyProducer=StringProducer(json.dumps(request_body)),
         )
 
-        d.addCallbacks(self._handle_response_body, self._handle_connection_error)
+        # Capture logging context to preserve it across asynchronous callbacks
+        session = log.context.get("session")
+        sensor = log.context.get("sensor")
+
+        d.addCallbacks(
+            self._handle_response_body, 
+            self._handle_connection_error,
+            callbackArgs=(session, sensor),
+            errbackArgs=(session, sensor)
+        )
         return d
 
     @inlineCallbacks
@@ -196,10 +219,25 @@ class LLMClient:
         Returns:
             The LLM's response text, or empty string on error.
         """
+        # Capture session/sensor context BEFORE the yield to ensure it's preserved
+        session = log.context.get("session")
+        sensor = log.context.get("sensor")
+
         status_code, response = yield self._send_request(prompt)
 
         if status_code != 200:
-            log.err(f"LLM API error (status {status_code}): {response.decode('utf-8')}")
+            error_msg = response.decode("utf-8")
+            log.msg(
+                eventid="cowrie.llm.error",
+                status=status_code,
+                error=error_msg,
+                format="LLM API error (status %(status)s): %(error)s",
+                message=f"LLM API error (status {status_code})",
+                comp="cowrie",
+                session=session,
+                sensor=sensor
+            )
+            log.err(f"LLM API error (status {status_code}): {error_msg}")
             return ""
 
         try:
@@ -208,15 +246,21 @@ class LLMClient:
             log.err(f"Failed to parse LLM response: {e}")
             return ""
 
-        if self.debug:
-            log.msg(
-                eventid="cowrie.llm.response",
-                response=response_json,
-                format="LLM response: %(response)s"
-            )
+        # Explicitly log the response with session context to ensure it reaches the audit log
+        log.msg(
+            eventid="cowrie.llm.response",
+            response=json.loads(json.dumps(response_json)),
+            format="LLM response: %(response)s",
+            message=f"LLM response: {response_json.get('model', 'unknown')}",
+            comp="cowrie",
+            session=session,
+            sensor=sensor,
+            system=f"cowrie,session,{session}" if session else "cowrie"
+        )
 
         if "choices" in response_json and len(response_json["choices"]) > 0:
-            content = response_json["choices"][0]["message"]["content"]
+            msg = response_json["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or msg.get("reasoning") or msg.get("thought") or ""
             return content
 
         log.err(f"Unexpected LLM response format: {response}")
