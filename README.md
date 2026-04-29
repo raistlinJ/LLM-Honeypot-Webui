@@ -48,6 +48,8 @@ A complete SSH/Telnet honeypot solution using [Cowrie](https://github.com/cowrie
    docker-compose up -d --build
    ```
 
+   Cowrie runtime state and JSON logs are persisted in Docker volumes (`cowrie-state` and `cowrie-logs`) so the stack does not depend on host file permissions.
+
 3. **Open the dashboard:**
    ```
    http://localhost:8080

@@ -12,8 +12,8 @@ services:
     volumes:
       - ./cowrie/etc:/cowrie/cowrie-git/etc
       - ./cowrie/custom_plugins/llm.py:/cowrie/cowrie-git/src/cowrie/llm/llm.py
-      - ./cowrie/var:/cowrie/cowrie-git/var
-      - ./cowrie/log:/cowrie/cowrie-git/var/log/cowrie
+      - cowrie-state:/cowrie/cowrie-git/var/lib/cowrie
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
     environment:
       - TZ=UTC
     networks:
@@ -33,7 +33,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./cowrie/etc:/cowrie-etc
-      - ./cowrie/log:/cowrie-logs:ro
+      - cowrie-logs:/cowrie-logs:ro
       - ./api/data:/app/data
       - ./.env:/app/.env
     environment:
@@ -82,3 +82,7 @@ services:
 networks:
   honeypot-net:
     driver: bridge
+
+volumes:
+  cowrie-state:
+  cowrie-logs:
