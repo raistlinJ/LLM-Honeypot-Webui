@@ -13,6 +13,7 @@ let pollTimer = null;
 let currentPage = 'dashboard';
 let logSearchDebounceTimer = null;
 let currentHoneypotStatus = 'unknown';
+let settingsSaveInProgress = false;
 
 // ===== Initialization =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -115,10 +116,47 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function nextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function setInterfaceLocked(isLocked) {
+    const appShell = document.getElementById('appShell');
+    const mobileMenuButton = document.getElementById('mobileMenuBtn');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+    document.body.setAttribute('aria-busy', isLocked ? 'true' : 'false');
+
+    if (appShell) {
+        if (isLocked) {
+            appShell.setAttribute('inert', '');
+            appShell.setAttribute('aria-hidden', 'true');
+        } else {
+            appShell.removeAttribute('inert');
+            appShell.removeAttribute('aria-hidden');
+        }
+    }
+
+    if (mobileMenuButton) {
+        mobileMenuButton.disabled = isLocked;
+        mobileMenuButton.setAttribute('aria-disabled', isLocked ? 'true' : 'false');
+    }
+
+    if (sidebarOverlay) {
+        sidebarOverlay.style.pointerEvents = isLocked ? 'none' : '';
+    }
+
+    if (isLocked && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+    }
+}
+
 function showRestartOverlay(title, message) {
     const overlay = document.getElementById('loadingOverlay');
     const titleEl = document.getElementById('loadingTitle');
     const messageEl = document.getElementById('loadingMessage');
+
+    setInterfaceLocked(true);
 
     if (!overlay || !titleEl || !messageEl) {
         return;
@@ -132,12 +170,20 @@ function showRestartOverlay(title, message) {
 
 function hideRestartOverlay() {
     const overlay = document.getElementById('loadingOverlay');
+
+    setInterfaceLocked(false);
+
     if (!overlay) {
         return;
     }
 
     overlay.classList.remove('active');
     document.body.classList.remove('overlay-open');
+}
+
+async function paintRestartOverlay(title, message) {
+    showRestartOverlay(title, message);
+    await nextPaint();
 }
 
 async function waitForHoneypotRunning() {
@@ -584,7 +630,7 @@ async function saveConfig(event) {
 
     try {
         if (shouldBlockForRestart) {
-            showRestartOverlay(
+            await paintRestartOverlay(
                 'Applying configuration',
                 'Stopping the honeypot, waiting briefly, and bringing it back online. The interface will unlock once it is healthy again.'
             );
@@ -679,33 +725,52 @@ async function loadSettingsForm() {
 async function saveSettings(event) {
     event.preventDefault();
 
-    const statusSnapshot = await apiFetch('/status').catch(() => ({ status: currentHoneypotStatus }));
-    updateStatusUI(statusSnapshot);
-
-    const selectedProvider = document.querySelector('.provider-card.selected')?.dataset.provider || 'openai';
-
-    let openaiModel = document.getElementById('settOpenAIModel').value;
-    if (openaiModel === 'custom') {
-        openaiModel = document.getElementById('settOpenAICustomModel').value || 'gpt-4o-mini';
+    if (settingsSaveInProgress) {
+        return;
     }
 
-    const payload = {
-        llm_provider: selectedProvider,
-        openai_api_key: document.getElementById('settApiKey').value,
-        openai_host: document.getElementById('settOpenAIHost').value,
-        openai_host_history: updateHistoryArray('openaiHostHistory', document.getElementById('settOpenAIHost').value),
-        openai_model: openaiModel,
-        ollama_host: document.getElementById('settOllamaHost').value,
-        ollama_host_history: updateHistoryArray('ollamaHostHistory', document.getElementById('settOllamaHost').value),
-        ollama_model: document.getElementById('settOllamaModel').value,
-        llm_temperature: parseFloat(document.getElementById('settTemperature').value) || 0.7,
-        llm_max_tokens: parseInt(document.getElementById('settMaxTokens').value) || 500,
-        llm_debug: document.getElementById('settDebug').checked,
-    };
+    settingsSaveInProgress = true;
 
-    const shouldBlockForRestart = statusSnapshot.status === 'running';
+    const submitButton = event.submitter || document.querySelector('#settingsForm button[type="submit"]');
+    const originalButtonText = submitButton?.innerHTML;
+
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.innerHTML = 'Saving...';
+    }
+
+    await paintRestartOverlay(
+        'Saving LLM settings',
+        'Applying your LLM configuration now. If the honeypot is running, the interface will stay locked until the restart finishes.'
+    );
 
     try {
+        const statusSnapshot = await apiFetch('/status').catch(() => ({ status: currentHoneypotStatus }));
+        updateStatusUI(statusSnapshot);
+
+        const selectedProvider = document.querySelector('.provider-card.selected')?.dataset.provider || 'openai';
+
+        let openaiModel = document.getElementById('settOpenAIModel').value;
+        if (openaiModel === 'custom') {
+            openaiModel = document.getElementById('settOpenAICustomModel').value || 'gpt-4o-mini';
+        }
+
+        const payload = {
+            llm_provider: selectedProvider,
+            openai_api_key: document.getElementById('settApiKey').value,
+            openai_host: document.getElementById('settOpenAIHost').value,
+            openai_host_history: updateHistoryArray('openaiHostHistory', document.getElementById('settOpenAIHost').value),
+            openai_model: openaiModel,
+            ollama_host: document.getElementById('settOllamaHost').value,
+            ollama_host_history: updateHistoryArray('ollamaHostHistory', document.getElementById('settOllamaHost').value),
+            ollama_model: document.getElementById('settOllamaModel').value,
+            llm_temperature: parseFloat(document.getElementById('settTemperature').value) || 0.7,
+            llm_max_tokens: parseInt(document.getElementById('settMaxTokens').value) || 500,
+            llm_debug: document.getElementById('settDebug').checked,
+        };
+
+        const shouldBlockForRestart = statusSnapshot.status === 'running';
+
         if (shouldBlockForRestart) {
             showRestartOverlay(
                 'Applying LLM settings',
@@ -729,9 +794,17 @@ async function saveSettings(event) {
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
     } finally {
-        if (shouldBlockForRestart) {
+        settingsSaveInProgress = false;
+
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.innerHTML = originalButtonText || 'Save Settings';
+        }
+
+        if (document.getElementById('loadingOverlay')?.classList.contains('active')) {
             hideRestartOverlay();
         }
+
         await refreshStatus();
     }
 }
