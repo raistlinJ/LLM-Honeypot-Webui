@@ -3,7 +3,10 @@ services:
   # Cowrie SSH/Telnet Honeypot
   # ============================================
   cowrie:
-    image: cowrie/cowrie:latest
+    build:
+      context: ./cowrie
+      dockerfile: Dockerfile
+    image: llm-honeypot-cowrie:local
     container_name: llm-honeypot-cowrie
     restart: unless-stopped
     ports:
@@ -19,6 +22,10 @@ services:
       - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
     environment:
       - TZ=UTC
+      - COWRIE_AUTO_CREATEFS=true
+      - COWRIE_CREATEFS_ROOT=/
+      - COWRIE_CREATEFS_DEPTH=6
+      - COWRIE_CREATEFS_INCLUDE_PROC=false
     networks:
       - honeypot-net
     extra_hosts:
