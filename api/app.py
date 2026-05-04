@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import docker
+import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -23,6 +24,10 @@ COWRIE_CONFIG_PATH = os.environ.get("COWRIE_CONFIG_PATH", "/cowrie-etc/cowrie.cf
 COWRIE_LOG_PATH = os.environ.get("COWRIE_LOG_PATH", "/cowrie-logs/cowrie.json")
 COWRIE_CONTAINER_NAME = os.environ.get("COWRIE_CONTAINER_NAME", "llm-honeypot-cowrie")
 SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/app/data/settings.json")
+
+LLM_CHECK_ATTEMPTS = 2
+LLM_CHECK_DELAY_SECONDS = 1
+LLM_CHECK_TIMEOUT_SECONDS = 5
 
 # Default settings
 DEFAULT_SETTINGS = {
@@ -68,6 +73,116 @@ def get_cowrie_container():
         return None
     except Exception:
         return None
+
+
+def fully_restart_cowrie(container, wait_seconds=3):
+    """Perform a full stop-wait-start cycle for the Cowrie container."""
+    container.reload()
+    if container.status in {"running", "restarting", "paused"}:
+        container.stop(timeout=10)
+        time.sleep(wait_seconds)
+
+    container.start()
+    time.sleep(wait_seconds)
+    container.reload()
+    return container.status
+
+
+def _matches_model(candidate, available_models):
+    """Allow exact matches and Ollama tag variants like llama3:latest."""
+    for model in available_models:
+        if model == candidate or model.startswith(f"{candidate}:"):
+            return True
+    return False
+
+
+def validate_llm_connection(settings, attempts=LLM_CHECK_ATTEMPTS):
+    """Check that the configured LLM provider is reachable and stable."""
+    provider = settings.get("llm_provider", "openai")
+    headers = {}
+    available_models = []
+
+    if provider == "openai":
+        host = (settings.get("openai_host") or "").strip()
+        model = (settings.get("openai_model") or "").strip()
+        api_key = (settings.get("openai_api_key") or "").strip()
+        if not host:
+            return {"ready": False, "error": "OpenAI host URL is required"}
+        if "api.openai.com" in host and not api_key:
+            return {"ready": False, "error": "OpenAI API key is required for api.openai.com"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        url = f"{host.rstrip('/')}/v1/models"
+    elif provider == "ollama":
+        host = (settings.get("ollama_host") or "").strip()
+        model = (settings.get("ollama_model") or "").strip()
+        if not host:
+            return {"ready": False, "error": "Ollama host URL is required"}
+        url = f"{host.rstrip('/')}/api/tags"
+    else:
+        return {"ready": False, "error": f"Unsupported LLM provider: {provider}"}
+
+    if not model:
+        return {"ready": False, "error": "An LLM model must be configured"}
+
+    last_error = None
+    successes = 0
+
+    for attempt in range(attempts):
+        try:
+            response = requests.get(url, headers=headers, timeout=LLM_CHECK_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            payload = response.json()
+            if provider == "openai":
+                available_models = [item.get("id", "") for item in payload.get("data", []) if item.get("id")]
+            else:
+                available_models = [item.get("name", "") for item in payload.get("models", []) if item.get("name")]
+
+            if available_models and not _matches_model(model, available_models):
+                available_preview = ", ".join(available_models[:10])
+                return {
+                    "ready": False,
+                    "error": f"Configured model '{model}' is not available from {provider}",
+                    "available_models": available_preview,
+                }
+
+            successes += 1
+        except Exception as exc:
+            last_error = str(exc)
+            break
+
+        if attempt < attempts - 1:
+            time.sleep(LLM_CHECK_DELAY_SECONDS)
+
+    if successes != attempts:
+        return {
+            "ready": False,
+            "error": last_error or "LLM provider did not pass stability checks",
+            "attempts": attempts,
+            "successes": successes,
+        }
+
+    return {
+        "ready": True,
+        "provider": provider,
+        "model": model,
+        "attempts": attempts,
+        "successes": successes,
+    }
+
+
+def ensure_llm_ready(settings):
+    """Raise when the current backend depends on an unavailable LLM connection."""
+    if settings.get("cowrie_backend", "shell") != "llm":
+        return
+
+    result = validate_llm_connection(settings)
+    if not result.get("ready"):
+        details = result.get("available_models")
+        message = result.get("error", "Unknown LLM validation error")
+        if details:
+            message = f"{message}. Available models: {details}"
+        raise ValueError(f"LLM connection check failed: {message}")
 
 
 def load_settings():
@@ -384,6 +499,7 @@ def start_honeypot():
         return jsonify({"error": "Cowrie container not found"}), 404
 
     try:
+        ensure_llm_ready(load_settings())
         container.reload()
         if container.status == "running":
             return jsonify({"message": "Cowrie is already running", "status": "running"})
@@ -393,6 +509,8 @@ def start_honeypot():
         return jsonify(
             {"message": "Cowrie started successfully", "status": container.status}
         )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -428,12 +546,13 @@ def restart_honeypot():
         return jsonify({"error": "Cowrie container not found"}), 404
 
     try:
-        container.restart(timeout=10)
-        time.sleep(3)
-        container.reload()
+        ensure_llm_ready(load_settings())
+        status = fully_restart_cowrie(container)
         return jsonify(
-            {"message": "Cowrie restarted successfully", "status": container.status}
+            {"message": "Cowrie restarted successfully", "status": status}
         )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -483,6 +602,7 @@ def update_config():
         ports_changed = (new_ssh_port != old_ssh_port) or (new_telnet_port != old_telnet_port)
         
         if data.get("auto_restart", False):
+            ensure_llm_ready(settings)
             if ports_changed:
                 success, msg = recreate_cowrie_container(settings)
                 if not success:
@@ -490,9 +610,11 @@ def update_config():
             else:
                 container = get_cowrie_container()
                 if container and container.status == "running":
-                    container.restart(timeout=10)
+                    fully_restart_cowrie(container)
         
         return jsonify({"message": "Configuration updated successfully"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -607,10 +729,24 @@ def update_settings():
 
         settings = load_settings()
         settings.update(data)
+
+        # Only block settings save when the LLM backend is actively in use.
+        ensure_llm_ready(settings)
+
         save_settings(settings)
         write_cowrie_config(settings)
 
-        return jsonify({"message": "Settings saved successfully"})
+        container = get_cowrie_container()
+        restarted = False
+        if container is not None:
+            container.reload()
+            if container.status == "running":
+                fully_restart_cowrie(container)
+                restarted = True
+
+        return jsonify({"message": "Settings saved successfully", "restarted": restarted})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
