@@ -43,12 +43,12 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./cowrie/etc:/cowrie-etc
+      - ./cowrie/etc:/cowrie/cowrie-git/etc
       - cowrie-logs:/cowrie-logs:ro
       - ./api/data:/app/data
       - ./.env:/app/.env
     environment:
-      - COWRIE_CONFIG_PATH=/cowrie-etc/cowrie.cfg
+      - COWRIE_CONFIG_PATH=/cowrie/cowrie-git/etc/cowrie.cfg
       - COWRIE_LOG_PATH=/cowrie-logs/cowrie.json
       - COWRIE_CONTAINER_NAME=llm-honeypot-cowrie
       - SETTINGS_PATH=/app/data/settings.json
