@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 PYTHON_BIN = "/cowrie/cowrie-env/bin/python3"
 CREATEFS_SCRIPT = "/cowrie/cowrie-git/src/cowrie/scripts/createfs.py"
 TWISTD_BIN = "/cowrie/cowrie-env/bin/twistd"
 DEFAULT_FS_PICKLE = "/cowrie/cowrie-git/var/lib/cowrie/fs.pickle"
+COWRIE_ROOT = "/cowrie/cowrie-git"
 
 
 def _is_enabled(var_name: str, default: bool = True) -> bool:
@@ -50,13 +50,14 @@ def generate_fs_pickle() -> None:
 
 
 def start_cowrie() -> None:
-    # Preserve optional command overrides passed to the container.
-    args = [TWISTD_BIN, "-n", "--umask=0022", "--pidfile=", "cowrie"] + sys.argv[1:]
+    args = [TWISTD_BIN, "-n", "--umask=0022", "--pidfile=", "cowrie"]
     print(f"[auto_start] Starting Cowrie: {' '.join(args)}", flush=True)
     os.execv(args[0], args)
 
 
 def main() -> None:
+    os.chdir(COWRIE_ROOT)
+
     if _is_enabled("COWRIE_AUTO_CREATEFS", default=True):
         generate_fs_pickle()
     else:
