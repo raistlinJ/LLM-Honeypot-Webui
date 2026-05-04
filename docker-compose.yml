@@ -15,6 +15,7 @@ services:
     volumes:
       - ./cowrie/etc:/cowrie/cowrie-git/etc
       - ./cowrie/custom_plugins/llm.py:/cowrie/cowrie-git/src/cowrie/llm/llm.py
+      - ./cowrie/custom_plugins/more.py:/cowrie/cowrie-git/src/cowrie/commands/more.py
       - ./cowrie/honeyfs:/cowrie/cowrie-git/honeyfs
       - ./cowrie/txtcmds:/cowrie/cowrie-git/txtcmds
       - ./cowrie/share/cowrie:/cowrie/cowrie-git/share/cowrie
