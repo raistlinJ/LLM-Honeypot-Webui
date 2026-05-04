@@ -17,7 +17,6 @@ services:
       - ./cowrie/custom_plugins/llm.py:/cowrie/cowrie-git/src/cowrie/llm/llm.py
       - ./cowrie/custom_plugins/more.py:/cowrie/cowrie-git/src/cowrie/commands/more.py
       - ./cowrie/honeyfs:/cowrie/cowrie-git/honeyfs
-      - ./cowrie/honeyfs:/cowrie/cowrie-git/src/cowrie/data/honeyfs
       - ./cowrie/txtcmds:/cowrie/cowrie-git/txtcmds
       - ./cowrie/share/cowrie:/cowrie/cowrie-git/share/cowrie
       - cowrie-state:/cowrie/cowrie-git/var/lib/cowrie

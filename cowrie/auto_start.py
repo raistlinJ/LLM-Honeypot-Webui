@@ -142,11 +142,6 @@ def generate_fs_pickle() -> None:
 
 
 def start_cowrie() -> None:
-    # Remove stale dropin.cache so Twisted re-discovers plugins cleanly
-    dropin_cache = os.path.join(COWRIE_ROOT, "src/twisted/plugins/dropin.cache")
-    if os.path.exists(dropin_cache):
-        os.remove(dropin_cache)
-
     args = [TWISTD_BIN, "-n", "--umask=0022", "--pidfile=", "cowrie"]
     print(f"[auto_start] Starting Cowrie: {' '.join(args)}", flush=True)
     os.execv(args[0], args)
