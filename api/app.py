@@ -5,6 +5,7 @@ Flask backend for managing the Cowrie SSH honeypot.
 """
 
 import configparser
+import hashlib
 import json
 import os
 import time
@@ -49,6 +50,10 @@ DEFAULT_SETTINGS = {
     "ssh_port": 2222,
     "telnet_port": 2223,
     "llm_debug": False,
+    "llm_last_test_status": "untested",
+    "llm_last_tested_at": "",
+    "llm_last_test_message": "Run Test LLM in LLM Settings before starting the honeypot.",
+    "llm_last_tested_fingerprint": "",
 }
 
 
@@ -94,6 +99,81 @@ def _matches_model(candidate, available_models):
         if model == candidate or model.startswith(f"{candidate}:"):
             return True
     return False
+
+
+def llm_connection_fingerprint(settings):
+    """Build a stable fingerprint for the connection-critical LLM settings."""
+    provider = settings.get("llm_provider", "openai")
+    snapshot = {
+        "cowrie_backend": settings.get("cowrie_backend", "shell"),
+        "llm_provider": provider,
+    }
+
+    if provider == "openai":
+        snapshot.update(
+            {
+                "openai_host": (settings.get("openai_host") or "").strip(),
+                "openai_model": (settings.get("openai_model") or "").strip(),
+                "openai_api_key": (settings.get("openai_api_key") or "").strip(),
+            }
+        )
+    elif provider == "ollama":
+        snapshot.update(
+            {
+                "ollama_host": (settings.get("ollama_host") or "").strip(),
+                "ollama_model": (settings.get("ollama_model") or "").strip(),
+            }
+        )
+
+    payload = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def get_llm_test_required_message(settings):
+    """Return the current manual-test requirement message for the saved settings."""
+    if settings.get("cowrie_backend", "shell") != "llm":
+        return "LLM backend is not active."
+    if settings.get("llm_last_test_status") == "passed":
+        return (
+            "LLM settings changed since the last successful Test LLM run. "
+            "Re-test the current configuration before starting the honeypot."
+        )
+    return "Run Test LLM in LLM Settings before starting the honeypot."
+
+
+def llm_test_matches_settings(settings):
+    """Return whether the saved settings still match the last successful manual test."""
+    if settings.get("cowrie_backend", "shell") != "llm":
+        return True
+
+    return (
+        settings.get("llm_last_test_status") == "passed"
+        and bool(settings.get("llm_last_tested_fingerprint"))
+        and settings.get("llm_last_tested_fingerprint") == llm_connection_fingerprint(settings)
+    )
+
+
+def clear_llm_test_state(settings, message=None):
+    """Clear the persisted manual-test proof for the current settings."""
+    settings["llm_last_test_status"] = "untested"
+    settings["llm_last_tested_at"] = ""
+    settings["llm_last_tested_fingerprint"] = ""
+    settings["llm_last_test_message"] = message or get_llm_test_required_message(settings)
+
+
+def mark_llm_test_success(settings, fingerprint, result, tested_at=None):
+    """Persist a successful manual LLM test for the supplied fingerprint."""
+    provider = result.get("provider", settings.get("llm_provider", "openai"))
+    model = result.get("model") or settings.get(
+        "openai_model" if provider == "openai" else "ollama_model", ""
+    )
+    tested_at = tested_at or datetime.now(timezone.utc).isoformat()
+
+    settings["llm_last_test_status"] = "passed"
+    settings["llm_last_tested_at"] = tested_at
+    settings["llm_last_tested_fingerprint"] = fingerprint
+    settings["llm_last_test_message"] = f"Connection test passed for {provider} / {model}."
+    return tested_at
 
 
 def validate_llm_connection(settings, attempts=LLM_CHECK_ATTEMPTS):
@@ -183,6 +263,15 @@ def ensure_llm_ready(settings):
         if details:
             message = f"{message}. Available models: {details}"
         raise ValueError(f"LLM connection check failed: {message}")
+
+
+def ensure_llm_tested(settings):
+    """Raise when the current LLM settings have not been manually tested."""
+    if settings.get("cowrie_backend", "shell") != "llm":
+        return
+    if llm_test_matches_settings(settings):
+        return
+    raise ValueError(get_llm_test_required_message(settings))
 
 
 def load_settings():
@@ -450,6 +539,11 @@ def _serialize_stats(stats):
 def get_status():
     """Get Cowrie container status and basic info."""
     container = get_cowrie_container()
+    settings = load_settings()
+    start_block_reason = None
+    if settings.get("cowrie_backend", "shell") == "llm" and not llm_test_matches_settings(settings):
+        start_block_reason = get_llm_test_required_message(settings)
+
     if container is None:
         return jsonify(
             {
@@ -457,6 +551,9 @@ def get_status():
                 "message": "Cowrie container not found",
                 "uptime": None,
                 "container_name": COWRIE_CONTAINER_NAME,
+                "start_allowed": start_block_reason is None,
+                "start_block_reason": start_block_reason,
+                "llm_test_current": llm_test_matches_settings(settings),
             }
         )
 
@@ -487,6 +584,9 @@ def get_status():
             "container_id": container.short_id,
             "uptime": uptime,
             "image": container.image.tags[0] if container.image.tags else "unknown",
+            "start_allowed": start_block_reason is None,
+            "start_block_reason": start_block_reason,
+            "llm_test_current": llm_test_matches_settings(settings),
         }
     )
 
@@ -499,7 +599,9 @@ def start_honeypot():
         return jsonify({"error": "Cowrie container not found"}), 404
 
     try:
-        ensure_llm_ready(load_settings())
+        settings = load_settings()
+        ensure_llm_tested(settings)
+        ensure_llm_ready(settings)
         container.reload()
         if container.status == "running":
             return jsonify({"message": "Cowrie is already running", "status": "running"})
@@ -546,7 +648,9 @@ def restart_honeypot():
         return jsonify({"error": "Cowrie container not found"}), 404
 
     try:
-        ensure_llm_ready(load_settings())
+        settings = load_settings()
+        ensure_llm_tested(settings)
+        ensure_llm_ready(settings)
         status = fully_restart_cowrie(container)
         return jsonify(
             {"message": "Cowrie restarted successfully", "status": status}
@@ -601,18 +705,32 @@ def update_config():
         # Determine if recreation or simple restart is needed
         ports_changed = (new_ssh_port != old_ssh_port) or (new_telnet_port != old_telnet_port)
         
+        restarted = False
+        test_required = False
+        message = "Configuration updated successfully"
+
         if data.get("auto_restart", False):
             ensure_llm_ready(settings)
-            if ports_changed:
+            if settings.get("cowrie_backend", "shell") == "llm" and not llm_test_matches_settings(settings):
+                test_required = True
+                message = "Configuration updated. Run Test LLM in LLM Settings before restarting the honeypot."
+            elif ports_changed:
                 success, msg = recreate_cowrie_container(settings)
                 if not success:
                     return jsonify({"error": f"Failed to recreate container: {msg}"}), 500
+                restarted = True
             else:
                 container = get_cowrie_container()
                 if container and container.status == "running":
                     fully_restart_cowrie(container)
+                    restarted = True
         
-        return jsonify({"message": "Configuration updated successfully"})
+        return jsonify({
+            "message": message,
+            "restarted": restarted,
+            "test_required": test_required,
+            "llm_test_current": llm_test_matches_settings(settings),
+        })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
@@ -716,6 +834,8 @@ def get_settings():
             masked["openai_api_key_masked"] = "***"
     else:
         masked["openai_api_key_masked"] = ""
+    masked["llm_test_current"] = llm_test_matches_settings(settings)
+    masked["llm_test_required_message"] = get_llm_test_required_message(settings)
     return jsonify(masked)
 
 
@@ -727,8 +847,29 @@ def update_settings():
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
+        tested_fingerprint = (data.pop("llm_tested_fingerprint", "") or "").strip()
+
         settings = load_settings()
+        previous_fingerprint = llm_connection_fingerprint(settings)
         settings.update(data)
+        current_fingerprint = llm_connection_fingerprint(settings)
+
+        if tested_fingerprint and tested_fingerprint == current_fingerprint:
+            mark_llm_test_success(
+                settings,
+                current_fingerprint,
+                {
+                    "provider": settings.get("llm_provider", "openai"),
+                    "model": settings.get(
+                        "openai_model"
+                        if settings.get("llm_provider", "openai") == "openai"
+                        else "ollama_model",
+                        "",
+                    ),
+                },
+            )
+        elif previous_fingerprint != current_fingerprint:
+            clear_llm_test_state(settings)
 
         # Only block settings save when the LLM backend is actively in use.
         ensure_llm_ready(settings)
@@ -738,13 +879,76 @@ def update_settings():
 
         container = get_cowrie_container()
         restarted = False
+        test_required = False
+        message = "Settings saved successfully"
         if container is not None:
             container.reload()
             if container.status == "running":
-                fully_restart_cowrie(container)
-                restarted = True
+                if settings.get("cowrie_backend", "shell") == "llm" and not llm_test_matches_settings(settings):
+                    test_required = True
+                    message = "Settings saved. Run Test LLM before restarting the honeypot."
+                else:
+                    fully_restart_cowrie(container)
+                    restarted = True
 
-        return jsonify({"message": "Settings saved successfully", "restarted": restarted})
+        return jsonify(
+            {
+                "message": message,
+                "restarted": restarted,
+                "test_required": test_required,
+                "llm_test_current": llm_test_matches_settings(settings),
+                "llm_last_test_status": settings.get("llm_last_test_status"),
+                "llm_last_tested_at": settings.get("llm_last_tested_at"),
+                "llm_last_test_message": settings.get("llm_last_test_message"),
+                "llm_last_tested_fingerprint": settings.get("llm_last_tested_fingerprint", ""),
+            }
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/llm/test", methods=["POST"])
+def test_llm_connection():
+    """Test the supplied LLM settings and persist a successful manual test proof."""
+    try:
+        data = request.get_json(silent=True) or {}
+        persisted_settings = load_settings()
+        test_settings = persisted_settings.copy()
+        test_settings.update(data)
+
+        result = validate_llm_connection(test_settings)
+        if not result.get("ready"):
+            details = result.get("available_models")
+            message = result.get("error", "Unknown LLM validation error")
+            if details:
+                message = f"{message}. Available models: {details}"
+            return jsonify({"error": message, "ready": False}), 400
+
+        fingerprint = llm_connection_fingerprint(test_settings)
+        tested_at = datetime.now(timezone.utc).isoformat()
+        persisted = fingerprint == llm_connection_fingerprint(persisted_settings)
+
+        if persisted:
+            mark_llm_test_success(persisted_settings, fingerprint, result, tested_at=tested_at)
+            save_settings(persisted_settings)
+
+        return jsonify(
+            {
+                "ready": True,
+                "message": (
+                    persisted_settings.get("llm_last_test_message")
+                    if persisted
+                    else f"Connection test passed for {result.get('provider')} / {result.get('model')}."
+                ),
+                "provider": result.get("provider"),
+                "model": result.get("model"),
+                "fingerprint": fingerprint,
+                "tested_at": tested_at,
+                "persisted": persisted,
+            }
+        )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:

@@ -1169,6 +1169,74 @@ tbody tr:last-child td {
     color: var(--text-tertiary);
 }
 
+.llm-test-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.llm-test-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1 1 320px;
+}
+
+.llm-test-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 112px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid var(--border-secondary);
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-secondary);
+}
+
+.llm-test-badge.passed {
+    background: rgba(52, 211, 153, 0.12);
+    border-color: rgba(52, 211, 153, 0.35);
+    color: var(--accent-emerald);
+}
+
+.llm-test-badge.pending {
+    background: rgba(56, 189, 248, 0.12);
+    border-color: rgba(56, 189, 248, 0.35);
+    color: var(--accent-cyan);
+}
+
+.llm-test-badge.failed {
+    background: rgba(251, 113, 133, 0.12);
+    border-color: rgba(251, 113, 133, 0.35);
+    color: var(--accent-rose);
+}
+
+.llm-test-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.llm-test-message {
+    font-size: 0.84rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.llm-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
 /* ========== Config Sections ========== */
 .config-section {
     margin-bottom: 28px;
@@ -1270,6 +1338,19 @@ body.overlay-open {
 
     .provider-cards {
         grid-template-columns: 1fr;
+    }
+
+    .llm-test-panel {
+        align-items: stretch;
+    }
+
+    .llm-action-buttons {
+        width: 100%;
+    }
+
+    .llm-action-buttons .btn {
+        flex: 1 1 0;
+        justify-content: center;
     }
 
     .form-row {

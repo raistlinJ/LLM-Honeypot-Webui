@@ -14,6 +14,14 @@ let currentPage = 'dashboard';
 let logSearchDebounceTimer = null;
 let currentHoneypotStatus = 'unknown';
 let settingsSaveInProgress = false;
+let llmTestInProgress = false;
+let llmTestedFingerprint = '';
+let llmTestedConnectionSignature = '';
+let llmTestStatus = 'untested';
+let llmTestMessage = 'Run Test LLM in LLM Settings before starting the honeypot.';
+let llmTestedAt = '';
+let currentStartAllowed = true;
+let currentStartBlockReason = '';
 
 // ===== Initialization =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,6 +35,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const customGroup = document.getElementById('openaiCustomModelGroup');
             customGroup.style.display = modelSelect.value === 'custom' ? 'block' : 'none';
         });
+    }
+
+    const settingsForm = document.getElementById('settingsForm');
+    if (settingsForm) {
+        settingsForm.addEventListener('input', syncLLMTestStateWithForm);
+        settingsForm.addEventListener('change', syncLLMTestStateWithForm);
     }
 });
 
@@ -92,10 +106,12 @@ function startPolling() {
 
 // ===== API Client =====
 async function apiFetch(endpoint, options = {}) {
+    const { expectTransientUnavailable = false, ...fetchOptions } = options;
+
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, {
-            headers: { 'Content-Type': 'application/json', ...options.headers },
-            ...options,
+            headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
+            ...fetchOptions,
         });
 
         if (!response.ok) {
@@ -105,8 +121,26 @@ async function apiFetch(endpoint, options = {}) {
 
         return await response.json();
     } catch (err) {
-        if (err.name === 'TypeError' && err.message.includes('fetch')) {
-            throw new Error('Unable to connect to the management API');
+        if (err.name === 'TypeError' || err.name === 'AbortError') {
+            const rawMessage = typeof err.message === 'string' && err.message.trim()
+                ? err.message.trim()
+                : err.name;
+
+            if (navigator.onLine === false) {
+                const offlineError = new Error('Your browser appears to be offline. Reconnect and try again.');
+                offlineError.code = 'browser-offline';
+                throw offlineError;
+            }
+
+            if (expectTransientUnavailable) {
+                const restartError = new Error(`The management API is temporarily unavailable while the honeypot restarts (${rawMessage}).`);
+                restartError.code = 'api-restarting';
+                throw restartError;
+            }
+
+            const networkError = new Error(`The management API could not be reached (${rawMessage}).`);
+            networkError.code = 'api-unreachable';
+            throw networkError;
         }
         throw err;
     }
@@ -193,7 +227,7 @@ async function waitForHoneypotRunning() {
 
     while (Date.now() < deadline) {
         try {
-            const data = await apiFetch('/status');
+            const data = await apiFetch('/status', { expectTransientUnavailable: true });
             updateStatusUI(data);
             lastStatus = data.status || 'unknown';
 
@@ -211,6 +245,10 @@ async function waitForHoneypotRunning() {
         await delay(RESTART_STATUS_POLL_INTERVAL);
     }
 
+    if (lastError?.code === 'api-restarting') {
+        throw new Error('The honeypot restart is taking longer than expected. The management API stayed unavailable during the restart window.');
+    }
+
     if (lastError) {
         throw lastError;
     }
@@ -224,13 +262,15 @@ async function refreshStatus() {
         const data = await apiFetch('/status');
         updateStatusUI(data);
     } catch (err) {
-        updateStatusUI({ status: 'unknown', message: 'API unreachable' });
+        updateStatusUI({ status: 'unknown', message: err.message || 'API unreachable' });
     }
 }
 
 function updateStatusUI(data) {
     const status = data.status || 'unknown';
     currentHoneypotStatus = status;
+    currentStartAllowed = data.start_allowed !== false;
+    currentStartBlockReason = data.start_block_reason || '';
     const dot = document.getElementById('statusDot');
     const title = document.getElementById('statusTitle');
     const subtitle = document.getElementById('statusSubtitle');
@@ -255,6 +295,11 @@ function updateStatusUI(data) {
 
     if (status === 'running' && data.uptime != null) {
         subtitle.textContent = `Uptime: ${formatUptime(data.uptime)} • Container: ${data.container_name || 'N/A'}`;
+        if (currentStartBlockReason) {
+            subtitle.textContent += ` • ${currentStartBlockReason}`;
+        }
+    } else if (currentStartBlockReason) {
+        subtitle.textContent = currentStartBlockReason;
     } else if (data.message) {
         subtitle.textContent = data.message;
     } else {
@@ -266,9 +311,11 @@ function updateStatusUI(data) {
     const btnStop = document.getElementById('btnStop');
     const btnRestart = document.getElementById('btnRestart');
 
-    btnStart.disabled = status === 'running';
+    btnStart.disabled = status === 'running' || !currentStartAllowed;
     btnStop.disabled = status !== 'running';
-    btnRestart.disabled = status !== 'running';
+    btnRestart.disabled = status !== 'running' || !currentStartAllowed;
+    btnStart.title = currentStartAllowed ? '' : currentStartBlockReason;
+    btnRestart.title = currentStartAllowed ? '' : currentStartBlockReason;
 
     // Sidebar status
     const isRunning = status === 'running';
@@ -279,12 +326,22 @@ function updateStatusUI(data) {
 
 // ===== Honeypot Control =====
 async function controlHoneypot(action) {
+    if ((action === 'start' || action === 'restart') && !currentStartAllowed) {
+        showToast(currentStartBlockReason || 'Run Test LLM before starting the honeypot.', 'warning');
+        return;
+    }
+
     const btn = document.getElementById(`btn${action.charAt(0).toUpperCase() + action.slice(1)}`);
     const originalHTML = btn.innerHTML;
+    const actionLabel = {
+        start: 'Starting',
+        stop: 'Stopping',
+        restart: 'Restarting',
+    }[action] || `${action}ing`;
 
     try {
         btn.disabled = true;
-        btn.innerHTML = `<span class="spinner"></span> ${action}ing...`;
+        btn.innerHTML = `<span class="spinner"></span> ${actionLabel}...`;
 
         const data = await apiFetch(`/${action}`, { method: 'POST' });
         showToast(data.message || `Honeypot ${action}ed`, 'success');
@@ -636,18 +693,20 @@ async function saveConfig(event) {
             );
         }
 
-        await apiFetch('/config', {
+        const result = await apiFetch('/config', {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
 
-        if (shouldBlockForRestart) {
+        if (shouldBlockForRestart && result.restarted) {
             await waitForHoneypotRunning();
         }
 
-        showToast('Configuration saved successfully', 'success');
-        if (payload.auto_restart) {
+        showToast(result.message || 'Configuration saved successfully', result.test_required ? 'info' : 'success');
+        if (result.restarted) {
             showToast('Honeypot restart completed', 'info');
+        } else if (result.test_required) {
+            showToast('Start and restart remain blocked until Test LLM passes for the saved configuration.', 'info');
         }
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
@@ -667,6 +726,195 @@ function selectProvider(provider) {
 
     document.getElementById('openaiSettings').style.display = provider === 'openai' ? 'block' : 'none';
     document.getElementById('ollamaSettings').style.display = provider === 'ollama' ? 'block' : 'none';
+    syncLLMTestStateWithForm();
+}
+
+function getSelectedProvider() {
+    return document.querySelector('.provider-card.selected')?.dataset.provider || 'openai';
+}
+
+function getSelectedOpenAIModel() {
+    const openaiModel = document.getElementById('settOpenAIModel').value;
+    if (openaiModel === 'custom') {
+        return document.getElementById('settOpenAICustomModel').value || 'gpt-4o-mini';
+    }
+    return openaiModel;
+}
+
+function buildLLMSettingsPayload(includeHistory = true) {
+    const payload = {
+        llm_provider: getSelectedProvider(),
+        openai_api_key: document.getElementById('settApiKey').value,
+        openai_host: document.getElementById('settOpenAIHost').value,
+        openai_model: getSelectedOpenAIModel(),
+        ollama_host: document.getElementById('settOllamaHost').value,
+        ollama_model: document.getElementById('settOllamaModel').value,
+        llm_temperature: parseFloat(document.getElementById('settTemperature').value) || 0.7,
+        llm_max_tokens: parseInt(document.getElementById('settMaxTokens').value) || 500,
+        llm_debug: document.getElementById('settDebug').checked,
+    };
+
+    if (includeHistory) {
+        payload.openai_host_history = updateHistoryArray('openaiHostHistory', payload.openai_host);
+        payload.ollama_host_history = updateHistoryArray('ollamaHostHistory', payload.ollama_host);
+    }
+
+    return payload;
+}
+
+function getLLMConnectionSignature(payload = buildLLMSettingsPayload(false)) {
+    const provider = payload.llm_provider || 'openai';
+    const signature = {
+        llm_provider: provider,
+        openai_host: provider === 'openai' ? (payload.openai_host || '').trim() : '',
+        openai_model: provider === 'openai' ? (payload.openai_model || '').trim() : '',
+        openai_api_key: provider === 'openai' ? (payload.openai_api_key || '').trim() : '',
+        ollama_host: provider === 'ollama' ? (payload.ollama_host || '').trim() : '',
+        ollama_model: provider === 'ollama' ? (payload.ollama_model || '').trim() : '',
+    };
+
+    return JSON.stringify(signature);
+}
+
+function isCurrentLLMFormTested() {
+    return Boolean(llmTestedFingerprint) && getLLMConnectionSignature() === llmTestedConnectionSignature;
+}
+
+function formatLLMTestTimestamp(timestamp) {
+    if (!timestamp) {
+        return '';
+    }
+
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+        return timestamp;
+    }
+
+    return date.toLocaleString();
+}
+
+function updateLLMTestUI() {
+    const badge = document.getElementById('llmTestBadge');
+    const message = document.getElementById('llmTestMessage');
+    const meta = document.getElementById('llmTestMeta');
+    const testButton = document.getElementById('btnTestLLM');
+    const saveHint = document.getElementById('llmSaveHint');
+    const hasCurrentTest = isCurrentLLMFormTested();
+
+    if (badge) {
+        badge.className = 'llm-test-badge pending';
+    }
+
+    if (llmTestInProgress) {
+        if (badge) {
+            badge.textContent = 'Testing';
+        }
+        if (message) {
+            message.textContent = 'Checking the configured provider, credentials, and model availability.';
+        }
+        if (meta) {
+            meta.textContent = '';
+        }
+    } else if (hasCurrentTest) {
+        if (badge) {
+            badge.className = 'llm-test-badge passed';
+            badge.textContent = 'Verified';
+        }
+        if (message) {
+            message.textContent = llmTestMessage || 'Connection test passed for the current settings.';
+        }
+        if (meta) {
+            meta.textContent = llmTestedAt ? `Last successful test: ${formatLLMTestTimestamp(llmTestedAt)}` : '';
+        }
+    } else {
+        if (badge) {
+            badge.className = `llm-test-badge ${llmTestStatus === 'failed' ? 'failed' : 'pending'}`;
+            badge.textContent = llmTestStatus === 'failed' ? 'Failed' : 'Test required';
+        }
+        if (message) {
+            message.textContent = llmTestMessage || 'Run Test LLM in LLM Settings before starting the honeypot.';
+        }
+        if (meta) {
+            meta.textContent = llmTestedAt && llmTestStatus === 'failed'
+                ? `Last failed test: ${formatLLMTestTimestamp(llmTestedAt)}`
+                : '';
+        }
+    }
+
+    if (testButton) {
+        testButton.disabled = llmTestInProgress || settingsSaveInProgress;
+        testButton.innerHTML = llmTestInProgress
+            ? '<span class="spinner"></span> Testing...'
+            : 'Test LLM';
+    }
+
+    if (saveHint) {
+        saveHint.textContent = hasCurrentTest
+            ? 'Settings are applied to cowrie.cfg. This LLM configuration has been verified and is ready to save/start.'
+            : 'Settings are applied to cowrie.cfg. Run Test LLM before starting the honeypot when the LLM backend is active.';
+    }
+}
+
+function syncLLMTestStateWithForm() {
+    if (llmTestInProgress) {
+        return;
+    }
+
+    if (!isCurrentLLMFormTested() && (llmTestStatus === 'passed' || llmTestedFingerprint)) {
+        llmTestStatus = 'untested';
+        llmTestMessage = 'Connection settings changed. Re-run Test LLM before starting the honeypot.';
+        llmTestedFingerprint = '';
+        llmTestedConnectionSignature = '';
+        llmTestedAt = '';
+    }
+
+    updateLLMTestUI();
+}
+
+async function testLLMConnection() {
+    if (llmTestInProgress || settingsSaveInProgress) {
+        return;
+    }
+
+    const payload = buildLLMSettingsPayload(false);
+
+    try {
+        llmTestInProgress = true;
+        llmTestStatus = 'untested';
+        llmTestMessage = 'Checking the configured provider, credentials, and model availability.';
+        updateLLMTestUI();
+
+        const result = await apiFetch('/llm/test', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+
+        llmTestStatus = 'passed';
+        llmTestMessage = result.message || 'Connection test passed for the current settings.';
+        llmTestedAt = result.tested_at || '';
+        llmTestedFingerprint = result.fingerprint || '';
+        llmTestedConnectionSignature = getLLMConnectionSignature(payload);
+
+        updateLLMTestUI();
+        showToast(
+            result.persisted
+                ? 'LLM connection verified for the saved configuration'
+                : 'LLM connection verified. Save Settings to apply this tested configuration.',
+            'success'
+        );
+    } catch (err) {
+        llmTestStatus = 'failed';
+        llmTestMessage = err.message;
+        llmTestedAt = new Date().toISOString();
+        llmTestedFingerprint = '';
+        llmTestedConnectionSignature = '';
+        updateLLMTestUI();
+        showToast(`LLM test failed: ${err.message}`, 'error');
+    } finally {
+        llmTestInProgress = false;
+        updateLLMTestUI();
+        await refreshStatus();
+    }
 }
 
 async function loadSettingsForm() {
@@ -717,8 +965,18 @@ async function loadSettingsForm() {
         document.getElementById('settMaxTokens').value = settings.llm_max_tokens ?? 500;
         document.getElementById('settDebug').checked = settings.llm_debug === true;
 
+        llmTestStatus = settings.llm_last_test_status || 'untested';
+        llmTestMessage = settings.llm_test_current
+            ? (settings.llm_last_test_message || 'Connection test passed for the current settings.')
+            : (settings.llm_test_required_message || 'Run Test LLM in LLM Settings before starting the honeypot.');
+        llmTestedAt = settings.llm_last_tested_at || '';
+        llmTestedFingerprint = settings.llm_test_current ? (settings.llm_last_tested_fingerprint || '') : '';
+        llmTestedConnectionSignature = settings.llm_test_current ? getLLMConnectionSignature() : '';
+        updateLLMTestUI();
+
     } catch (err) {
         // Use defaults
+        updateLLMTestUI();
     }
 }
 
@@ -748,26 +1006,10 @@ async function saveSettings(event) {
         const statusSnapshot = await apiFetch('/status').catch(() => ({ status: currentHoneypotStatus }));
         updateStatusUI(statusSnapshot);
 
-        const selectedProvider = document.querySelector('.provider-card.selected')?.dataset.provider || 'openai';
-
-        let openaiModel = document.getElementById('settOpenAIModel').value;
-        if (openaiModel === 'custom') {
-            openaiModel = document.getElementById('settOpenAICustomModel').value || 'gpt-4o-mini';
+        const payload = buildLLMSettingsPayload(true);
+        if (isCurrentLLMFormTested() && llmTestedFingerprint) {
+            payload.llm_tested_fingerprint = llmTestedFingerprint;
         }
-
-        const payload = {
-            llm_provider: selectedProvider,
-            openai_api_key: document.getElementById('settApiKey').value,
-            openai_host: document.getElementById('settOpenAIHost').value,
-            openai_host_history: updateHistoryArray('openaiHostHistory', document.getElementById('settOpenAIHost').value),
-            openai_model: openaiModel,
-            ollama_host: document.getElementById('settOllamaHost').value,
-            ollama_host_history: updateHistoryArray('ollamaHostHistory', document.getElementById('settOllamaHost').value),
-            ollama_model: document.getElementById('settOllamaModel').value,
-            llm_temperature: parseFloat(document.getElementById('settTemperature').value) || 0.7,
-            llm_max_tokens: parseInt(document.getElementById('settMaxTokens').value) || 500,
-            llm_debug: document.getElementById('settDebug').checked,
-        };
 
         const shouldBlockForRestart = statusSnapshot.status === 'running';
 
@@ -783,13 +1025,31 @@ async function saveSettings(event) {
             body: JSON.stringify(payload),
         });
 
+        if (result.llm_test_current && result.llm_last_tested_fingerprint) {
+            llmTestStatus = result.llm_last_test_status || 'passed';
+            llmTestMessage = result.llm_last_test_message || result.message || 'Connection test passed for the current settings.';
+            llmTestedAt = result.llm_last_tested_at || llmTestedAt;
+            llmTestedFingerprint = result.llm_last_tested_fingerprint;
+            llmTestedConnectionSignature = getLLMConnectionSignature(payload);
+        } else {
+            llmTestStatus = 'untested';
+            llmTestMessage = result.llm_last_test_message || result.message || 'Run Test LLM before starting the honeypot.';
+            llmTestedAt = '';
+            llmTestedFingerprint = '';
+            llmTestedConnectionSignature = '';
+        }
+
+        updateLLMTestUI();
+
         if (shouldBlockForRestart && result.restarted) {
             await waitForHoneypotRunning();
         }
 
-        showToast('LLM settings saved successfully', 'success');
+        showToast(result.message || 'LLM settings saved successfully', result.test_required ? 'info' : 'success');
         if (result.restarted) {
             showToast('Honeypot fully restarted to apply LLM settings', 'info');
+        } else if (result.test_required) {
+            showToast('Start and restart remain blocked until Test LLM passes for the saved configuration.', 'info');
         }
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
@@ -889,6 +1149,7 @@ async function fetchModels(provider) {
         }
         
         showToast(`Successfully fetched ${models.length} models`, 'success');
+        syncLLMTestStateWithForm();
         
     } catch (err) {
         showToast(err.message, 'error');
@@ -900,6 +1161,7 @@ function switchToManualOllama(currentValue) {
     container.innerHTML = `
         <input type="text" class="form-input mono" id="settOllamaModel" value="${currentValue}" placeholder="llama3">
     `;
+    syncLLMTestStateWithForm();
 }
 
 function populateHistory(datalistId, history) {
