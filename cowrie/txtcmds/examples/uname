@@ -1,0 +1,3 @@
+# Sample static output for command: uname -a
+# Remove comment lines if you copy this into txtcmds/uname
+Linux svr04 5.4.0-162-generic #179-Ubuntu SMP x86_64 x86_64 x86_64 GNU/Linux

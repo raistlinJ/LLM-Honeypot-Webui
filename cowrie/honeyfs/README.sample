@@ -1,0 +1,22 @@
+# honeyfs sample guide
+#
+# This folder emulates a fake filesystem exposed to attackers.
+# Any file you place here appears inside the honeypot path.
+#
+# Example structure to create:
+#   honeyfs/
+#   ├── etc/
+#   │   └── motd
+#   ├── home/
+#   │   └── root/
+#   │       └── notes.txt
+#   └── var/
+#       └── log/
+#           └── auth.log
+#
+# Quick example content ideas:
+# - etc/motd: "Authorized access only"
+# - home/root/notes.txt: fake admin notes
+# - var/log/auth.log: fake SSH login attempts
+#
+# Tip: keep files believable and consistent with your target OS flavor.

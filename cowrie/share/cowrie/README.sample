@@ -1,0 +1,16 @@
+# share/cowrie sample guide
+#
+# This directory can host Cowrie shared data files (custom artifacts,
+# optional text resources, and reusable fake content files).
+#
+# Example files you can add here:
+# - distro-release.txt (fake OS release metadata)
+# - package-list.txt  (fake installed package inventory)
+# - legal-banner.txt  (fake warning/legal text)
+#
+# Example package-list.txt snippet:
+#   openssh-server 1:8.2p1-4ubuntu0.10
+#   python3 3.8.10-0ubuntu1~20.04
+#   nginx 1.18.0-0ubuntu1.6
+#
+# Keep values internally consistent across honeyfs and txtcmds outputs.

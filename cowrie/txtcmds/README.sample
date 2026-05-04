@@ -1,0 +1,17 @@
+# txtcmds sample guide
+#
+# txtcmds stores static output templates for command emulation.
+# Each file name is the command (or command path), and file content
+# is what Cowrie can return for that command.
+#
+# Suggested layout:
+#   txtcmds/
+#   └── examples/
+#       ├── uname
+#       └── id
+#
+# To activate a sample, copy it to txtcmds root using the command name.
+# Example:
+#   cp txtcmds/examples/uname txtcmds/uname
+#
+# Keep outputs realistic for your chosen distro and kernel version.
