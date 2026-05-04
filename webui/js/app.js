@@ -615,11 +615,16 @@ async function saveSettings(event) {
     };
 
     try {
-        await apiFetch('/settings', {
+        const result = await apiFetch('/settings', {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
         showToast('LLM settings saved successfully', 'success');
+
+        if (result.restarted) {
+            showToast('Honeypot restarted to apply new LLM settings', 'info');
+            setTimeout(refreshStatus, 2500);
+        }
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
     }

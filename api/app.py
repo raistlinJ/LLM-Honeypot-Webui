@@ -599,7 +599,7 @@ def get_settings():
 
 @app.route("/api/settings", methods=["PUT"])
 def update_settings():
-    """Update application settings and sync to cowrie.cfg."""
+    """Update application settings, sync to cowrie.cfg, and apply immediately."""
     try:
         data = request.get_json()
         if not data:
@@ -610,7 +610,20 @@ def update_settings():
         save_settings(settings)
         write_cowrie_config(settings)
 
-        return jsonify({"message": "Settings saved successfully"})
+        container = get_cowrie_container()
+        restarted = False
+        if container is not None:
+            container.reload()
+            if container.status == "running":
+                container.restart(timeout=10)
+                restarted = True
+
+        return jsonify(
+            {
+                "message": "Settings saved successfully",
+                "restarted": restarted,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
