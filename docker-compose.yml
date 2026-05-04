@@ -23,6 +23,7 @@ services:
     environment:
       - TZ=UTC
       - COWRIE_AUTO_CREATEFS=true
+      - COWRIE_FS_PICKLE=/cowrie/cowrie-git/var/lib/cowrie/fs.pickle
       - COWRIE_CREATEFS_ROOT=/
       - COWRIE_CREATEFS_DEPTH=6
       - COWRIE_CREATEFS_INCLUDE_PROC=false

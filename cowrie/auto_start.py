@@ -11,7 +11,7 @@ from pathlib import Path
 PYTHON_BIN = "/cowrie/cowrie-env/bin/python3"
 CREATEFS_SCRIPT = "/cowrie/cowrie-git/src/cowrie/scripts/createfs.py"
 TWISTD_BIN = "/cowrie/cowrie-env/bin/twistd"
-FS_PICKLE = "/cowrie/cowrie-git/share/cowrie/fs.pickle"
+DEFAULT_FS_PICKLE = "/cowrie/cowrie-git/var/lib/cowrie/fs.pickle"
 
 
 def _is_enabled(var_name: str, default: bool = True) -> bool:
@@ -25,8 +25,12 @@ def generate_fs_pickle() -> None:
     root_dir = os.getenv("COWRIE_CREATEFS_ROOT", "/")
     max_depth = os.getenv("COWRIE_CREATEFS_DEPTH", "6")
     include_proc = _is_enabled("COWRIE_CREATEFS_INCLUDE_PROC", default=False)
+    fs_pickle = os.getenv("COWRIE_FS_PICKLE", DEFAULT_FS_PICKLE)
 
-    Path(FS_PICKLE).parent.mkdir(parents=True, exist_ok=True)
+    fs_pickle_path = Path(fs_pickle)
+    fs_pickle_path.parent.mkdir(parents=True, exist_ok=True)
+    if fs_pickle_path.exists():
+        fs_pickle_path.unlink()
 
     cmd = [
         PYTHON_BIN,
@@ -36,7 +40,7 @@ def generate_fs_pickle() -> None:
         "-d",
         str(max_depth),
         "-o",
-        FS_PICKLE,
+        str(fs_pickle_path),
     ]
     if include_proc:
         cmd.insert(2, "-p")
