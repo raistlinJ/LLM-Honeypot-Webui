@@ -13,7 +13,11 @@
 
 <!-- Loading Overlay -->
 <div class="loading-overlay" id="loadingOverlay">
-    <div class="loading-spinner"></div>
+    <div class="loading-dialog" role="dialog" aria-modal="true" aria-labelledby="loadingTitle" aria-describedby="loadingMessage">
+        <div class="loading-spinner"></div>
+        <h2 class="loading-title" id="loadingTitle">Restarting honeypot</h2>
+        <p class="loading-message" id="loadingMessage">Saving your changes and waiting for the honeypot to come back online.</p>
+    </div>
 </div>
 
 <!-- Toast Container -->

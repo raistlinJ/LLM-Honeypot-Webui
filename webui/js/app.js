@@ -7,9 +7,12 @@
 // ===== Configuration =====
 const API_BASE = '/api';
 const POLL_INTERVAL = 5000; // ms
+const RESTART_STATUS_POLL_INTERVAL = 1000; // ms
+const RESTART_STATUS_TIMEOUT = 45000; // ms
 let pollTimer = null;
 let currentPage = 'dashboard';
 let logSearchDebounceTimer = null;
+let currentHoneypotStatus = 'unknown';
 
 // ===== Initialization =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -108,6 +111,67 @@ async function apiFetch(endpoint, options = {}) {
     }
 }
 
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function showRestartOverlay(title, message) {
+    const overlay = document.getElementById('loadingOverlay');
+    const titleEl = document.getElementById('loadingTitle');
+    const messageEl = document.getElementById('loadingMessage');
+
+    if (!overlay || !titleEl || !messageEl) {
+        return;
+    }
+
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    overlay.classList.add('active');
+    document.body.classList.add('overlay-open');
+}
+
+function hideRestartOverlay() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (!overlay) {
+        return;
+    }
+
+    overlay.classList.remove('active');
+    document.body.classList.remove('overlay-open');
+}
+
+async function waitForHoneypotRunning() {
+    const deadline = Date.now() + RESTART_STATUS_TIMEOUT;
+    let lastStatus = currentHoneypotStatus;
+    let lastError = null;
+
+    while (Date.now() < deadline) {
+        try {
+            const data = await apiFetch('/status');
+            updateStatusUI(data);
+            lastStatus = data.status || 'unknown';
+
+            if (lastStatus === 'running') {
+                return data;
+            }
+
+            if (['exited', 'dead', 'not_found'].includes(lastStatus)) {
+                throw new Error(`Honeypot restart failed: status is ${lastStatus}`);
+            }
+        } catch (err) {
+            lastError = err;
+        }
+
+        await delay(RESTART_STATUS_POLL_INTERVAL);
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    throw new Error(`Timed out waiting for honeypot restart (last status: ${lastStatus})`);
+}
+
 // ===== Status Management =====
 async function refreshStatus() {
     try {
@@ -120,6 +184,7 @@ async function refreshStatus() {
 
 function updateStatusUI(data) {
     const status = data.status || 'unknown';
+    currentHoneypotStatus = status;
     const dot = document.getElementById('statusDot');
     const title = document.getElementById('statusTitle');
     const subtitle = document.getElementById('statusSubtitle');
@@ -501,6 +566,9 @@ async function loadConfig() {
 async function saveConfig(event) {
     event.preventDefault();
 
+    const statusSnapshot = await apiFetch('/status').catch(() => ({ status: currentHoneypotStatus }));
+    updateStatusUI(statusSnapshot);
+
     const payload = {
         cowrie_hostname: document.getElementById('cfgHostname').value,
         cowrie_backend: document.getElementById('cfgBackend').value,
@@ -512,18 +580,36 @@ async function saveConfig(event) {
         auto_restart: document.getElementById('cfgAutoRestart').checked,
     };
 
+    const shouldBlockForRestart = payload.auto_restart && statusSnapshot.status === 'running';
+
     try {
+        if (shouldBlockForRestart) {
+            showRestartOverlay(
+                'Applying configuration',
+                'Stopping the honeypot, waiting briefly, and bringing it back online. The interface will unlock once it is healthy again.'
+            );
+        }
+
         await apiFetch('/config', {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
+
+        if (shouldBlockForRestart) {
+            await waitForHoneypotRunning();
+        }
+
         showToast('Configuration saved successfully', 'success');
         if (payload.auto_restart) {
-            showToast('Honeypot is restarting...', 'info');
-            setTimeout(refreshStatus, 4000);
+            showToast('Honeypot restart completed', 'info');
         }
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
+    } finally {
+        if (shouldBlockForRestart) {
+            hideRestartOverlay();
+        }
+        await refreshStatus();
     }
 }
 
@@ -593,6 +679,9 @@ async function loadSettingsForm() {
 async function saveSettings(event) {
     event.preventDefault();
 
+    const statusSnapshot = await apiFetch('/status').catch(() => ({ status: currentHoneypotStatus }));
+    updateStatusUI(statusSnapshot);
+
     const selectedProvider = document.querySelector('.provider-card.selected')?.dataset.provider || 'openai';
 
     let openaiModel = document.getElementById('settOpenAIModel').value;
@@ -614,18 +703,36 @@ async function saveSettings(event) {
         llm_debug: document.getElementById('settDebug').checked,
     };
 
+    const shouldBlockForRestart = statusSnapshot.status === 'running';
+
     try {
+        if (shouldBlockForRestart) {
+            showRestartOverlay(
+                'Applying LLM settings',
+                'Saving your LLM configuration and fully restarting the honeypot. The interface will unlock once the service is back online.'
+            );
+        }
+
         const result = await apiFetch('/settings', {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
+
+        if (shouldBlockForRestart && result.restarted) {
+            await waitForHoneypotRunning();
+        }
+
         showToast('LLM settings saved successfully', 'success');
         if (result.restarted) {
             showToast('Honeypot fully restarted to apply LLM settings', 'info');
-            setTimeout(refreshStatus, 4000);
         }
     } catch (err) {
         showToast(`Failed to save: ${err.message}`, 'error');
+    } finally {
+        if (shouldBlockForRestart) {
+            hideRestartOverlay();
+        }
+        await refreshStatus();
     }
 }
 
