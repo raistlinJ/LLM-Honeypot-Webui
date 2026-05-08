@@ -1,0 +1,6 @@
+services:
+  api:
+    ports:
+      - "${API_PORT:-5000}:5000"
+    command:
+      ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "120", "app:app"]

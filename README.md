@@ -50,6 +50,13 @@ A complete SSH/Telnet honeypot solution using [Cowrie](https://github.com/cowrie
 
    Cowrie runtime state and JSON logs are persisted in Docker volumes (`cowrie-state` and `cowrie-logs`) so the stack does not depend on host file permissions.
 
+   To run without the Web UI and expose only the API for CLI or script access:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.headless.yml up -d --build cowrie api
+   ```
+
+   The headless override publishes the Flask API on `${API_PORT:-5000}` and runs Gunicorn with a single worker to reduce resource usage.
+
 3. **Open the dashboard:**
    ```
    http://localhost:8080
